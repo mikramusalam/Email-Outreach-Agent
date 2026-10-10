@@ -1,0 +1,755 @@
+{
+  "name": "Octoflo - Email Outreach Agent (Optimized - Zoho SMTP)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Octoflo Email Outreach Agent — Optimized\n\n**Setup**\n1. In your **Leads** tab keep/add: `Outreach Status` | `Email Sent Date`.\n2. Open **Read Leads** + the green *Update* nodes and connect the same Google Sheet + **Leads** tab.\n3. **Send Email (Zoho SMTP)** -> create/select an SMTP credential for your Zoho Mail account.\n4. **Groq: Write Email** -> connect your Groq credential.\n5. Open **Prepare AI Prompt** -> replace `SENDER_NAME`, `SENDER_TITLE`, and optional postal address.\n6. In the SMTP credential use your Zoho Mail settings. For `info@octoflo.co`, start with the SMTP server/port shown in your Zoho account (typically port 587 with TLS; paid domain accounts may use `smtppro.zoho.com`).\n7. Test with `DAILY_SEND_LIMIT = 2` first, using your own email as a test row.\n\n**What changed**\n- Website content is now passed to the AI, not just the URL.\n- The AI selects a niche-specific pain point and outreach angle.\n- Subject lines use curiosity/problem hooks rather than generic AI/automation language.\n- First emails are short, plain-text and reply-oriented, with **no attachment**.\n- The AI is explicitly forbidden from inventing observations, metrics, clients, tools or problems.\n- Different niches receive different messaging: missed calls, lead response, intake, bookings, follow-up, customer support, etc.\n- The CTA is low-friction: usually a question or permission to send a short example, rather than immediately pushing a meeting.\n\n**Flow**\nReads leads -> prioritises uncontacted leads -> finds missing emails from websites -> extracts useful website evidence -> AI chooses the strongest niche-specific angle -> writes one short email -> sends sequentially -> updates the sheet.\n",
+        "height": 520,
+        "width": 760,
+        "color": 4
+      },
+      "id": "5c5db9da-b472-4ff8-9537-88b8b77b6934",
+      "name": "Setup Guide",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -120,
+        -440
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 10 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "923ba2bf-b41d-447a-ae24-0825d7ebfd57",
+      "name": "Weekdays 10 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "options": {}
+      },
+      "id": "d4c5cf06-a3d0-45d3-a867-2215ffcdc469",
+      "name": "Read Leads",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        220,
+        260
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// ---- Easy settings ----\nconst DAILY_SEND_LIMIT = 20;      // max emails sent per run\nconst MAX_WEBSITE_LOOKUPS = 10;   // leads WITHOUT an email: how many websites we check for an email each run\n// -----------------------\n\nconst SKIP = ['sent', 'no email', 'send failed', 'replied', 'bounced', 'do not contact', 'unsubscribed'];\nconst EMAIL_RE = /[A-Z0-9._%+\\-]+@[A-Z0-9.\\-]+\\.[A-Z]{2,}/i;\nconst social = /(facebook|instagram|tiktok|twitter|linktr|youtube|whatsapp|wa\\.me|yelp|tripadvisor|google)\\./i;\n\nconst rows = $input.all().map(i => i.json || {});\nconst status = r => String(r['Outreach Status'] || '').trim().toLowerCase();\nconst emailOf = r => { const m = String(r['Email'] || '').match(EMAIL_RE); return m ? m[0].toLowerCase() : ''; };\nconst rank = p => ({ high: 0, medium: 1, low: 2 }[String(p || '').trim().toLowerCase()] ?? 1);\n\nconst candidates = rows.filter(r =>\n  String(r['Business Name'] || '').trim() &&\n  String(r['#'] ?? '').trim() !== '' &&\n  !SKIP.includes(status(r))\n);\n\nconst sorter = (a, b) => rank(a['Priority']) - rank(b['Priority']) || (parseInt(a['#'], 10) || 0) - (parseInt(b['#'], 10) || 0);\n\nconst withEmail = candidates.filter(r => emailOf(r)).sort(sorter);\nconst noEmail = candidates.filter(r => !emailOf(r) && String(r['Website'] || '').trim()).sort(sorter);\n\nconst picked = [...withEmail.slice(0, DAILY_SEND_LIMIT), ...noEmail.slice(0, MAX_WEBSITE_LOOKUPS)];\n\nfunction classify(category, opportunity) {\n  const s = `${category || ''} ${opportunity || ''}`.toLowerCase();\n  if (/real estate|realtor|property|realty|broker/.test(s)) return { niche: 'Real Estate', angle: 'lead response and follow-up', pain: 'inquiries can go cold when response or follow-up is delayed' };\n  if (/plumb|hvac|roof|roofing|electric|electrician|landscap|pest|cleaning|remodel|contractor|home service|garage door|solar/.test(s)) return { niche: 'Home Services', angle: 'missed-call handling and lead qualification', pain: 'new inquiries can be missed when crews or staff are busy' };\n  if (/dentist|dental|orthodont|med spa|medical spa|clinic|doctor|dermat|chiropr|physio|health/.test(s)) return { niche: 'Dental / Medical / Med Spa', angle: 'inquiry handling and appointment booking', pain: 'staff spend time answering repetitive questions and coordinating bookings' };\n  if (/law|attorney|legal/.test(s)) return { niche: 'Law Firms', angle: 'lead intake and qualification', pain: 'new inquiries need quick, structured intake before a team member can follow up' };\n  if (/auto|automotive|car dealer|dealership|collision|mechanic|repair shop/.test(s)) return { niche: 'Automotive', angle: 'sales lead response and appointment follow-up', pain: 'sales inquiries need timely responses and consistent follow-up' };\n  if (/marketing|advertis|digital agency|seo agency|lead generation agency|creative agency/.test(s)) return { niche: 'Marketing Agencies', angle: 'white-label automation for clients', pain: 'agencies can spend too much time manually building repetitive workflows for clients' };\n  if (/ecommerce|e-commerce|shopify|online store|retail/.test(s)) return { niche: 'E-commerce', angle: 'customer support and order automation', pain: 'customers repeatedly ask about products, orders, delivery and status' };\n  if (/gym|fitness|wellness|yoga|pilates|personal train/.test(s)) return { niche: 'Fitness & Wellness', angle: 'lead follow-up and booking', pain: 'new membership inquiries need quick responses and consistent follow-up' };\n  if (/school|education|academy|training|college|university|tutor/.test(s)) return { niche: 'Education', angle: 'inquiry handling and follow-up', pain: 'prospective students and parents often need answers before taking the next step' };\n  if (/hotel|motel|restaurant|cafe|salon|spa|hospitality/.test(s)) return { niche: 'Hospitality & Local Business', angle: 'customer inquiry and booking automation', pain: 'staff can be pulled into repetitive questions and booking requests' };\n  if (/construction|industrial|manufactur|factory|logistics|warehouse/.test(s)) return { niche: 'Construction / Industrial', angle: 'internal workflow and inquiry automation', pain: 'repetitive coordination and information requests can consume staff time' };\n  return { niche: category || 'Local Business', angle: 'customer inquiry and workflow automation', pain: 'repetitive inquiries and manual follow-up may be taking staff time' };\n}\n\nreturn picked.map(r => {\n  const email = emailOf(r);\n  const strategy = classify(r['Category'], r['Our Service Opportunity']);\n  const website = String(r['Website'] || '').trim();\n  return {\n    json: {\n      '#': r['#'],\n      name: String(r['Business Name']).trim(),\n      category: String(r['Category'] || '').trim(),\n      address: String(r['Address'] || '').trim(),\n      rating: r['Rating'] || '',\n      reviews: r['Review Count'] || '',\n      website,\n      email,\n      opportunity: String(r['Our Service Opportunity'] || '').trim(),\n      niche: strategy.niche,\n      angle: strategy.angle,\n      likelyPain: strategy.pain,\n      priority: String(r['Priority'] || '').trim(),\n      sendLimit: DAILY_SEND_LIMIT,\n      fetchUrl: (!email && website && !social.test(website)) ? website : ''\n    }\n  };\n});"
+      },
+      "id": "6a4023ba-576c-485f-8b96-449787ac410c",
+      "name": "Pick Leads To Contact",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.fetchUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 8000,
+          "allowUnauthorizedCerts": true,
+          "redirect": {
+            "redirect": {
+              "maxRedirects": 5
+            }
+          },
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "text",
+              "outputPropertyName": "data"
+            }
+          },
+          "batching": {
+            "batch": {
+              "batchSize": 5,
+              "batchInterval": 300
+            }
+          }
+        }
+      },
+      "id": "b5698e9f-e502-4760-b1b4-3ae04539bb00",
+      "name": "Fetch Website",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        260
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const leads = $('Pick Leads To Contact').all();\nconst homes = $input.all();\n\nreturn homes.map((item, i) => {\n  const lead = (leads[i] && leads[i].json) || {};\n  const html = (item.json && typeof item.json.data === 'string') ? item.json.data : '';\n  let contactUrl = '';\n\n  if (html && lead.fetchUrl) {\n    const re = /href\\s*=\\s*[\"']([^\"'#][^\"']*)[\"']/gi;\n    let m;\n    while ((m = re.exec(html)) !== null) {\n      const href = m[1].trim();\n      const low = href.toLowerCase();\n      if (!low.includes('contact')) continue;\n      if (/^(mailto:|tel:|javascript:)/.test(low)) continue;\n      try {\n        const abs = new URL(href, lead.fetchUrl).href;\n        if (abs.replace(/\\/$/, '') !== lead.fetchUrl.replace(/\\/$/, '')) { contactUrl = abs; break; }\n      } catch (e) {}\n    }\n  }\n  return { json: { contact_url: contactUrl } };\n});"
+      },
+      "id": "5ca297e8-2d5e-405d-8c6f-ccc14e3c27c0",
+      "name": "Find Contact Link",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.contact_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 8000,
+          "allowUnauthorizedCerts": true,
+          "redirect": {
+            "redirect": {
+              "maxRedirects": 5
+            }
+          },
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "text",
+              "outputPropertyName": "data"
+            }
+          },
+          "batching": {
+            "batch": {
+              "batchSize": 5,
+              "batchInterval": 300
+            }
+          }
+        }
+      },
+      "id": "fc687378-45fc-4232-abaf-80540267f0c2",
+      "name": "Fetch Contact Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        260
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const leads = $('Pick Leads To Contact').all();\nconst homes = $('Fetch Website').all();\nconst contacts = $('Fetch Contact Page').all();\n\nconst BAD = /(\\.(png|jpe?g|gif|svg|webp|ico|css|js|woff2?)$)|sentry|wixpress|example\\.|domain\\.com|yourname|yourdomain|email@|@2x|u003e|noreply|no-reply|donotreply/i;\nconst PREFERRED = /^(info|contact|hello|hi|sales|office|admin|support|enquiries|inquiries|team|bookings|reservations|orders)@/;\n\nfunction pickEmail(text, host) {\n  const mailtos = [...text.matchAll(/mailto:([^\"'?\\s<>&]+)/gi)].map(m => {\n    try { return decodeURIComponent(m[1]); } catch (e) { return m[1]; }\n  });\n  const plain = text.match(/[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9\\-]+(?:\\.[a-zA-Z0-9\\-]+)*\\.[a-zA-Z]{2,}/g) || [];\n  const found = new Set();\n  for (const e of [...mailtos, ...plain]) {\n    const c = e.trim().toLowerCase().replace(/[.,;:]+$/, '');\n    if (/^[a-z0-9._%+\\-]+@[a-z0-9.\\-]+\\.[a-z]{2,}$/.test(c) && !BAD.test(c)) found.add(c);\n  }\n  const list = [...found];\n  if (!list.length) return '';\n  const root = (host || '').replace(/^www\\./, '');\n  const same = root ? list.filter(e => e.split('@')[1].endsWith(root)) : [];\n  return same.find(e => PREFERRED.test(e)) || same[0] || list.find(e => PREFERRED.test(e)) || list[0];\n}\n\nfunction cleanHtml(html) {\n  return String(html || '')\n    .replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')\n    .replace(/<style[\\s\\S]*?<\\/style>/gi, ' ')\n    .replace(/<noscript[\\s\\S]*?<\\/noscript>/gi, ' ')\n    .replace(/<svg[\\s\\S]*?<\\/svg>/gi, ' ')\n    .replace(/<[^>]+>/g, ' ')\n    .replace(/&nbsp;/gi, ' ')\n    .replace(/&amp;/gi, '&').replace(/&quot;/gi, '\"').replace(/&#39;/gi, \"'\")\n    .replace(/\\s+/g, ' ')\n    .trim();\n}\n\nfunction usefulText(html) {\n  const text = cleanHtml(html);\n  // Keep the beginning and a few likely high-value sections without flooding the model.\n  const chunks = text.split(/(?<=[.!?])\\s+/).filter(x => x.length > 25);\n  const useful = chunks.filter(x => !/cookie|privacy policy|terms of service|copyright|javascript|all rights reserved/i.test(x));\n  return useful.slice(0, 35).join(' ').slice(0, 5000);\n}\n\nconst limit = (leads[0] && leads[0].json.sendLimit) || 20;\nconst usedEmails = new Set();\nconst out = [];\nlet sendCount = 0;\n\nleads.forEach((l, i) => {\n  const lead = l.json;\n  let email = lead.email || '';\n  let source = email ? 'sheet' : '';\n  const h = homes[i] && homes[i].json && typeof homes[i].json.data === 'string' ? homes[i].json.data : '';\n  const c = contacts[i] && contacts[i].json && typeof contacts[i].json.data === 'string' ? contacts[i].json.data : '';\n  const combined = (h + '\\n' + c).replace(/\\\\\\//g, '/');\n  let websiteText = usefulText(combined);\n\n  if (!email && lead.fetchUrl) {\n    let host = '';\n    try { host = new URL(lead.website).hostname; } catch (e) {}\n    email = pickEmail(combined, host);\n    source = email ? 'website' : '';\n  }\n\n  if (email) {\n    if (usedEmails.has(email) || sendCount >= limit) return;\n    usedEmails.add(email);\n    sendCount++;\n  }\n  out.push({ json: { ...lead, email, emailSource: source, hasEmail: !!email, websiteEvidence: websiteText } });\n});\n\nreturn out;"
+      },
+      "id": "0cdfeccf-42b8-4573-aaee-b9689401f6d5",
+      "name": "Find Emails",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "2194d18e-4b46-4f10-b652-5ca663530ada",
+              "leftValue": "={{ $json.hasEmail }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "57af69d9-e9ba-48b5-a7b9-f2cc6f9a0dcd",
+      "name": "Has Email?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1540,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "#": "={{ String($json['#']) }}",
+            "Outreach Status": "No Email"
+          },
+          "matchingColumns": [
+            "#"
+          ],
+          "schema": [
+            {
+              "id": "#",
+              "displayName": "#",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Outreach Status",
+              "displayName": "Outreach Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "2ff41acb-5147-4a8c-ae4d-c4e4f78a24de",
+      "name": "Mark No Email",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1760,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ---- EDIT THESE ----\nconst SENDER_NAME = 'Your Name';\nconst SENDER_TITLE = 'Founder, Octoflo';\nconst SENDER_WEBSITE = 'https://www.octoflo.co';\nconst BUSINESS_ADDRESS = ''; // Optional US postal address\nconst MODEL = 'openai/gpt-oss-120b';\n// --------------------\n\nconst signature = [SENDER_NAME, SENDER_TITLE, SENDER_WEBSITE, BUSINESS_ADDRESS].filter(Boolean).join('\\n');\n\nreturn $input.all().map(it => {\n  const l = it.json;\n  const prompt = `You are the senior outbound copywriter for Octoflo, a business automation and custom systems company.\n\nYour job is NOT to write a generic AI-agency pitch. Your job is to identify the most plausible business problem visible from the supplied evidence, then write a short email that makes the owner think: \"They actually looked at my business.\"\n\nPROSPECT\nBusiness: ${l.name}\nCategory: ${l.category || 'Unknown'}\nNiche: ${l.niche || 'Unknown'}\nLocation: ${l.address || 'Unknown'}\nWebsite: ${l.website || 'Unknown'}\nRating: ${l.rating || 'Unknown'}\nReview count: ${l.reviews || 'Unknown'}\nResearch opportunity: ${l.opportunity || 'None supplied'}\nRecommended angle: ${l.angle || 'customer inquiry and workflow automation'}\nLikely pain hypothesis: ${l.likelyPain || 'manual inquiries or follow-up'}\nWebsite evidence: ${l.websiteEvidence || 'No usable website text was extracted.'}\n\nOCTOFLO CAN HELP WITH\n- AI chat/website assistants\n- AI voice receptionists and callers\n- Lead qualification and follow-up\n- Appointment/booking automation\n- WhatsApp and conversational automation\n- CRM and business systems\n- Workflow and data automation\n- Customer support automation\n- Custom internal tools and portals\n\nFIRST-EMAIL OBJECTIVE\nStart a conversation. Do NOT try to explain everything Octoflo does. Do NOT send a proposal. Do NOT push hard for a sales call.\n\nPERSONALIZATION RULES\n1. Use ONE concrete observation from the supplied business/website evidence when one exists.\n2. The observation must be verifiable from the supplied data. Never invent a service, location, employee, ad campaign, technology, lead volume, problem, revenue figure, or process.\n3. Do not use the Google rating/review count as the main hook. It is context, not a reason to contact them.\n4. If the website evidence is weak, use the business category + recommended angle rather than fabricating a website observation.\n5. Mention Octoflo only after establishing the reason for reaching out.\n6. Prefer plain business language such as \"new inquiries\", \"missed calls\", \"follow-up\", \"booking\", \"customer questions\" and \"manual work\". Do not repeatedly say AI, automation, workflow, system, or agent.\n\nHOOK / ANGLE RULES\nChoose ONE strongest angle based on the niche and evidence:\n- Real estate: responding to and following up with new property inquiries.\n- Home services: missed calls, lead qualification and booking while staff/crews are busy.\n- Dental/medical/med spa: answering repetitive questions and turning inquiries into booked appointments.\n- Law: structured intake and qualification of new inquiries.\n- Automotive: responding to sales inquiries and following up toward appointments.\n- Marketing agencies: white-label automation they can offer to their clients.\n- E-commerce: product questions, order/status support and repetitive customer service.\n- Fitness/wellness: membership lead response, follow-up and booking.\n- Education: parent/student inquiry handling and follow-up.\n- Hospitality/local business: repetitive customer questions and booking/inquiry handling.\n- Construction/industrial/B2B: repetitive coordination, inquiries and internal processes.\n- Other: choose the most defensible customer-facing or operational pain from the evidence.\n\nEMAIL STYLE\n- 55 to 90 words for the body before signature.\n- Plain text only.\n- Natural, direct, human, slightly conversational.\n- No buzzwords such as \"revolutionize\", \"transform\", \"unlock\", \"10x\", \"cutting-edge\", \"seamless\", \"game-changing\".\n- No emojis.\n- No bullet points.\n- No exaggerated claims or guaranteed results.\n- Do not say \"I hope you're doing well\".\n- Do not introduce the company with a long paragraph.\n- Do not use fake familiarity such as \"I loved your website\" unless the evidence genuinely supports it.\n- Do not mention that you \"came across\" the company as the entire opening; lead with the observation or question.\n- Do not ask more than ONE question at the end.\n- Prefer a low-friction CTA such as: \"Is this something you're already handling?\" / \"Would it be useful if I sent a 2-minute example?\" / \"Worth exploring?\"\n- A meeting CTA is allowed, but only as a secondary option. Do not make \"15-minute call\" the default.\n\nSUBJECT LINE\nCreate 3 candidate subject lines, then select the strongest one.\nEach must be 2 to 7 words, natural, non-clickbait, and tied to the email's actual angle.\nGood patterns include:\n- Quick question about {{business}}\n- Question about your inquiries\n- Your new leads\n- Quick idea for {{business}}\n- Missed calls at {{business}}\n- A thought on follow-up\n- Your appointment inquiries\n- Question about {{specific service}}\nAvoid generic subjects like \"AI Solutions\", \"Automation Services\", \"Grow Your Business\", \"Revolutionize Your Business\", \"Partnership Opportunity\", or \"10X Your Business\".\nAvoid excessive personalization tokens or punctuation.\n\nSTRUCTURE\n1. One-line observation or relevant question.\n2. One short sentence connecting that situation to a specific Octoflo capability.\n3. One sentence explaining the practical outcome.\n4. One low-friction question.\n\nIMPORTANT\nThe email should feel like a targeted business-development message, not an AI-generated marketing email. It is okay to be very simple. Specificity beats cleverness.\n\nReturn ONLY valid JSON in exactly this shape:\n{\"subject\":\"...\",\"body\":\"...\"}`;\n  return { json: { ...l, model: MODEL, prompt, signature } };\n});"
+      },
+      "id": "801712ba-c6ac-4605-8919-2e88598493fa",
+      "name": "Prepare AI Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "groqApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $json.model, messages: [{ role: 'user', content: $json.prompt }], reasoning_effort: 'low', temperature: 0.65, max_completion_tokens: 1200 }) }}",
+        "options": {
+          "timeout": 90000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 3000
+            }
+          }
+        }
+      },
+      "id": "71576d97-6df9-4ba3-ab30-6352b8b8b86a",
+      "name": "Groq: Write Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        160
+      ],
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 20000
+    },
+    {
+      "parameters": {
+        "jsCode": "const prompts = $('Prepare AI Prompt').all();\nconst ai = $input.all();\n\nfunction parse(item) {\n  try {\n    const raw = String(item.json.choices?.[0]?.message?.content || '').replace(/```json|```/gi, '').trim();\n    const start = raw.indexOf('{');\n    const end = raw.lastIndexOf('}');\n    if (start < 0 || end <= start) return null;\n    const o = JSON.parse(raw.slice(start, end + 1));\n    if (o.subject && o.body) {\n      return { subject: String(o.subject).trim(), body: String(o.body).trim() };\n    }\n  } catch (e) {}\n  return null;\n}\n\nfunction fallback(l) {\n  const angle = l.angle || 'customer inquiries and follow-up';\n  const body = `I noticed ${l.name} focuses on ${l.category || 'serving customers'}${l.address ? ` in ${l.address.split(',')[0]}` : ''}. I had a quick thought around ${angle}: Octoflo helps businesses handle repetitive inquiries and follow-up automatically, so the team does not have to manage every step manually. If this is already handled well on your side, no worries. Would it be useful if I sent a short example of what this could look like?`;\n  return { subject: `Quick idea for ${l.name}`, body };\n}\n\nreturn prompts.map((p, i) => {\n  const l = p.json;\n  const r = parse(ai[i]) || fallback(l);\n  let body = r.body.replace(/^(hi|hello|dear)[^\\n]*\\n+/i, '').trim();\n  // Keep the generated copy compact and remove accidental meta-language.\n  body = body.replace(/\\b(I hope you're doing well|hope you're doing well),?\\s*/ig, '').trim();\n  const subject = r.subject.replace(/[\\r\\n]+/g, ' ').replace(/^['\"]|['\"]$/g, '').trim().slice(0, 80);\n  return {\n    json: {\n      '#': l['#'],\n      name: l.name,\n      email: l.email,\n      subject,\n      body: `Hi ${l.name} team,\\n\\n${body}\\n\\n${l.signature}`\n    }\n  };\n});"
+      },
+      "id": "1e06b629-4afe-4343-a3d2-cbeddb1a4960",
+      "name": "Build Emails",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "b580883d-4817-41b0-ac58-51c3d3394305",
+      "name": "Loop Over Leads",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        2420,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "info@octoflo.co",
+        "toEmail": "={{ $json.email }}",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "text",
+        "text": "={{ $json.body }}",
+        "options": {
+          "appendAttribution": false,
+          "senderName": "Ikram | Octoflo",
+          "replyTo": "info@octoflo.co"
+        }
+      },
+      "id": "ebfa0553-8d95-47cd-9265-e1e2488733ff",
+      "name": "Send Email (Zoho SMTP)",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        2640,
+        160
+      ],
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "smtp": {
+          "id": "",
+          "name": "Octoflo Zoho SMTP"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "#": "={{ String($('Loop Over Leads').item.json['#']) }}",
+            "Email": "={{ $('Loop Over Leads').item.json.email }}",
+            "Outreach Status": "Sent",
+            "Email Sent Date": "={{ $now.toFormat('yyyy-MM-dd') }}"
+          },
+          "matchingColumns": [
+            "#"
+          ],
+          "schema": [
+            {
+              "id": "#",
+              "displayName": "#",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Outreach Status",
+              "displayName": "Outreach Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Email Sent Date",
+              "displayName": "Email Sent Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "27e268a2-1e66-445d-a47a-3ef6aa2b02ae",
+      "name": "Mark Sent",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2860,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "#": "={{ String($('Loop Over Leads').item.json['#']) }}",
+            "Email": "={{ $('Loop Over Leads').item.json.email }}",
+            "Outreach Status": "Send Failed"
+          },
+          "matchingColumns": [
+            "#"
+          ],
+          "schema": [
+            {
+              "id": "#",
+              "displayName": "#",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Outreach Status",
+              "displayName": "Outreach Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "601c3a48-f540-4295-9794-0d18014c3516",
+      "name": "Mark Failed",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2860,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 60,
+        "unit": "seconds"
+      },
+      "id": "c4913865-596d-4d6b-81ff-08bad7758140",
+      "name": "Wait 60s Between Emails",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3080,
+        160
+      ],
+      "webhookId": "9090848e-2992-407c-a900-46cf079095cc"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Weekdays 10 AM": {
+      "main": [
+        [
+          {
+            "node": "Read Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Leads": {
+      "main": [
+        [
+          {
+            "node": "Pick Leads To Contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Leads To Contact": {
+      "main": [
+        [
+          {
+            "node": "Fetch Website",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Website": {
+      "main": [
+        [
+          {
+            "node": "Find Contact Link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Contact Link": {
+      "main": [
+        [
+          {
+            "node": "Fetch Contact Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Contact Page": {
+      "main": [
+        [
+          {
+            "node": "Find Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Emails": {
+      "main": [
+        [
+          {
+            "node": "Has Email?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Email?": {
+      "main": [
+        [
+          {
+            "node": "Prepare AI Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark No Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare AI Prompt": {
+      "main": [
+        [
+          {
+            "node": "Groq: Write Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq: Write Email": {
+      "main": [
+        [
+          {
+            "node": "Build Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Emails": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Leads": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Send Email (Zoho SMTP)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Sent": {
+      "main": [
+        [
+          {
+            "node": "Wait 60s Between Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Failed": {
+      "main": [
+        [
+          {
+            "node": "Wait 60s Between Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 60s Between Emails": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email (Zoho SMTP)": {
+      "main": [
+        [
+          {
+            "node": "Mark Sent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "772a3423-aebb-4000-9ede-e3b0238efd79",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}
